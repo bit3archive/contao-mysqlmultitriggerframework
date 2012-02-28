@@ -40,6 +40,12 @@ $GLOBALS['TL_HOOKS']['sqlCompileCommands'][]    = array('MySQLMultiTriggerFramew
 
 
 /**
+ * Procedure examples
+ */
+// $GLOBALS['TL_PROCEDURE']['<name>'] = '<sql>';
+
+
+/**
  * Trigger examples
  */
 // $GLOBALS['TL_TRIGGER']['<table>']['<time>']['<event>'] = '<sql>';

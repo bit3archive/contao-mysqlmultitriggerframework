@@ -44,6 +44,82 @@ class MySQLMultiTriggerFramework extends Backend
 {
 	public function hookSqlCompileCommands($return)
 	{
+		// fetch defined procedures
+		$arrExistingProcedures = $this->Database
+			->prepare("SHOW PROCEDURE STATUS WHERE Db = ?")
+			->execute($GLOBALS['TL_CONFIG']['dbDatabase'])
+			->fetchEach('Name');
+
+		$arrProcedures = array();
+
+		// update procedures
+		if (isset($GLOBALS['TL_PROCEDURE']) && is_array($GLOBALS['TL_PROCEDURE'])) {
+			foreach ($GLOBALS['TL_PROCEDURE'] as $strProcedureDefinition => $strSql) {
+				if (preg_match('#^(.*)\((.*)\)\s*$#', $strProcedureDefinition, $arrMatch)) {
+					$objProcedure                       = new stdClass();
+					$objProcedure->name                 = trim(str_replace('`', '', $arrMatch[1]));
+					$objProcedure->parameters           = implode(', ', array_map('trim', explode(',', $arrMatch[2])));
+					$objProcedure->sql                  = implode("\n", array_filter(array_map('trim', explode("\n", $strSql))));
+
+					if (isset($arrProcedures[$objProcedure->name])) {
+						throw new Exception('Duplicate procedure ' . $objProcedure->name . '!');
+					} else {
+						$arrProcedures[$objProcedure->name] = $objProcedure;
+					}
+				}
+			}
+		}
+
+		// check existing procedures that needs to be droped
+		foreach ($arrExistingProcedures as $strProcedureName) {
+			if (!isset($arrProcedures[$strProcedureName])) {
+				$return['ALTER_ADD'][] = 'DROP PROCEDURE `' . $strProcedureName . '`';
+
+				// HOOK: add custom logic
+				if (isset($GLOBALS['TL_HOOKS']['mysqlProcedureDrop']) && is_array($GLOBALS['TL_HOOKS']['mysqlProcedureDrop'])) {
+					foreach ($GLOBALS['TL_HOOKS']['mysqlProcedureDrop'] as $callback)
+					{
+						$this->import($callback[0]);
+						$return = $this->$callback[0]->$callback[1]($strProcedureName, $return);
+					}
+				}
+			}
+		}
+
+		// check procedures to be created or updated
+		foreach ($arrProcedures as $strProcedureName => $objProcedure) {
+			if (in_array($strProcedureName, $arrExistingProcedures)) {
+				$arrTemp = $this->Database
+					->execute("SHOW CREATE PROCEDURE `" . $strProcedureName . "`")
+					->row();
+				if (preg_match('#CREATE.*PROCEDURE.*\((.*)\).*BEGIN(.*)END#ms', $arrTemp['Create Procedure'], $arrMatch)) {
+					$strParams = implode(', ', array_map('trim', explode(',', $arrMatch[1])));
+					$strCreate = trim($arrMatch[2]);
+					if ($strParams == $objProcedure->parameters && $strCreate == $objProcedure->sql) {
+						continue;
+					} else {
+						$return['ALTER_ADD'][] = 'DROP PROCEDURE `' . $strProcedureName . '`';
+					}
+				} else {
+					throw new Exception('Could not read procedure ' . $strProcedureName . ' from database.');
+				}
+			}
+
+			$return['ALTER_ADD'][] = sprintf("CREATE PROCEDURE `%s`(%s) BEGIN\n%s\nEND",
+				$strProcedureName,
+				$objProcedure->parameters,
+				$objProcedure->sql);
+
+			// HOOK: add custom logic
+			if (isset($GLOBALS['TL_HOOKS']['mysqlProcedureCreate']) && is_array($GLOBALS['TL_HOOKS']['mysqlProcedureCreate'])) {
+				foreach ($GLOBALS['TL_HOOKS']['mysqlProcedureCreate'] as $callback)
+				{
+					$this->import($callback[0]);
+					$return = $this->$callback[0]->$callback[1]($objProcedure, $return);
+				}
+			}
+		}
+
 		// build new triggers array
 		$arrTrigger = array();
 
@@ -105,8 +181,7 @@ class MySQLMultiTriggerFramework extends Backend
 			$return['ALTER_ADD'][] = 'DROP TRIGGER `' . $strTriggerName . '`';
 
 			// HOOK: add custom logic
-			if (isset($GLOBALS['TL_HOOKS']['mysqlMultiTriggerDrop']) && is_array($GLOBALS['TL_HOOKS']['mysqlMultiTriggerDrop']))
-			{
+			if (isset($GLOBALS['TL_HOOKS']['mysqlMultiTriggerDrop']) && is_array($GLOBALS['TL_HOOKS']['mysqlMultiTriggerDrop'])) {
 				foreach ($GLOBALS['TL_HOOKS']['mysqlMultiTriggerDrop'] as $callback)
 				{
 					$this->import($callback[0]);
@@ -127,8 +202,7 @@ END',
 				$objTrigger->sql);
 
 			// HOOK: add custom logic
-			if (isset($GLOBALS['TL_HOOKS']['mysqlMultiTriggerCreate']) && is_array($GLOBALS['TL_HOOKS']['mysqlMultiTriggerCreate']))
-			{
+			if (isset($GLOBALS['TL_HOOKS']['mysqlMultiTriggerCreate']) && is_array($GLOBALS['TL_HOOKS']['mysqlMultiTriggerCreate'])) {
 				foreach ($GLOBALS['TL_HOOKS']['mysqlMultiTriggerCreate'] as $callback)
 				{
 					$this->import($callback[0]);
